@@ -99,7 +99,8 @@ def main() -> None:
     adapter = get_adapter(args.adapter)
     k = args.k
     gold_path = _resolve_path(args.gold_dir)
-    data_dir = gold_path.parent / "data"
+    dataset_dir = gold_path.parent
+    data_dir = dataset_dir / "data"
 
     questions = adapter.load_questions(gold_path)
     if not questions:
@@ -108,7 +109,7 @@ def main() -> None:
     if args.limit > 0:
         questions = questions[: args.limit]
 
-    out_dir = BASE_DIR / "predictions" / MODEL / f"pass@{k}" / "sql"
+    out_dir = dataset_dir / "prediction" / MODEL / f"pass@{k}" / "sql"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     temperature = 0 if k == 1 else args.temperature
