@@ -7,7 +7,7 @@ from .base import BaseAdapter
 from .ecommerce_bird import EcommerceBirdAdapter
 
 ADAPTERS = {
-    "ecommerce_bird": EcommerceBirdAdapter,
+    "ecommerce_bird_sample200": EcommerceBirdAdapter,
 }
 
 
