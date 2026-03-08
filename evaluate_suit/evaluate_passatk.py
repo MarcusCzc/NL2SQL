@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import Process, Queue
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import pandas as pd
 from tqdm import tqdm
@@ -31,10 +31,10 @@ def get_gold_sql_and_db(meta_by_id: Dict[str, Dict[str, Any]], instance_id: str)
     return rec.get("db_id"), (rec.get("SQL") or "").strip()
 
 
-def _execute_sql_worker(db_path: str, sql: str, result_queue: Queue) -> None:
+def _execute_sql_worker(db_path: Union[Path, str], sql: str, result_queue: Queue) -> None:
     """Subprocess executes SQL, puts result in result_queue. Reads from disk, no copy to memory."""
     try:
-        conn = sqlite3.connect(db_path, timeout=60)
+        conn = sqlite3.connect(str(db_path), timeout=60)
         try:
             df = pd.read_sql_query(sql, conn)
             result_queue.put(("ok", df))
@@ -45,7 +45,7 @@ def _execute_sql_worker(db_path: str, sql: str, result_queue: Queue) -> None:
 
 
 def execute_sql_to_dataframe(
-    db_path: str, sql: str, timeout: float = SQL_TIMEOUT
+    db_path: Path, sql: str, timeout: float = SQL_TIMEOUT
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """Execute SQL on SQLite and return DataFrame. Timeout 30s counted as error. Returns (df, None) on success, (None, error_msg) on failure."""
     q: Queue = Queue()
@@ -67,15 +67,15 @@ def execute_sql_to_dataframe(
 
 
 @lru_cache(maxsize=None)
-def load_gold_csv(file_path: str) -> pd.DataFrame:
+def load_gold_csv(file_path: Union[Path, str]) -> pd.DataFrame:
     """Load gold result CSV (cached) for comparison with predictions."""
     return pd.read_csv(file_path)
 
 
-def load_jsonl_to_dict(jsonl_file: str) -> Dict[str, Any]:
+def load_jsonl_to_dict(jsonl_path: Path) -> Dict[str, Any]:
     """Parse JSONL into {instance_id: entry} dict."""
     data_dict: Dict[str, Any] = {}
-    with open(jsonl_file, "r", encoding="utf-8") as f:
+    with open(jsonl_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -114,7 +114,7 @@ def _run_sql_and_compare(
     pred_sql_path: Path,
     meta_by_id: Dict[str, Dict[str, Any]],
     data_dir: Path,
-    result_csv_dir: str,
+    result_csv_dir: Path,
     result_csv_stem: str,
     gold_result_dir: Optional[Path] = None,
 ) -> Tuple[int, Optional[str]]:
@@ -132,14 +132,14 @@ def _run_sql_and_compare(
         if not db_name:
             return 0, "No gold for instance_id"
         if gold_path and gold_path.exists():
-            gold_set = df_to_result_set(load_gold_csv(str(gold_path)))
+            gold_set = df_to_result_set(load_gold_csv(gold_path))
         else:
             if not gold_sql:
                 return 0, "No gold SQL for instance_id"
             sqlite_path = get_sqlite_path(data_dir, db_name)
             if not sqlite_path.exists():
                 return 0, f"Database not found: {sqlite_path}"
-            gold_pd, gold_err = execute_sql_to_dataframe(str(sqlite_path), gold_sql)
+            gold_pd, gold_err = execute_sql_to_dataframe(sqlite_path, gold_sql)
             if gold_err:
                 return 0, f"Gold SQL error: {gold_err}"
             gold_set = df_to_result_set(gold_pd)
@@ -149,13 +149,12 @@ def _run_sql_and_compare(
             return 0, f"Database not found: {sqlite_path}"
 
         pred_sql = extract_sql_query(pred_sql_path.read_text(encoding="utf-8"))
-        pred_pd, pred_err = execute_sql_to_dataframe(str(sqlite_path), pred_sql)
+        pred_pd, pred_err = execute_sql_to_dataframe(sqlite_path, pred_sql)
         if pred_err:
             return 0, pred_err
 
-        if result_csv_dir:
-            Path(result_csv_dir).mkdir(parents=True, exist_ok=True)
-            pred_pd.to_csv(Path(result_csv_dir) / f"{result_csv_stem}.csv", index=False)
+        result_csv_dir.mkdir(parents=True, exist_ok=True)
+        pred_pd.to_csv(result_csv_dir / f"{result_csv_stem}.csv", index=False)
 
         score = 1 if df_to_result_set(pred_pd) == gold_set else 0
         return score, "Result mismatch" if score == 0 else None
@@ -168,7 +167,7 @@ def evaluate_single_sql_file(
     pred_sql_dir: Path,
     meta_by_id: Dict[str, Dict[str, Any]],
     data_dir: Path,
-    result_csv_dir: str,
+    result_csv_dir: Path,
     gold_result_dir: Optional[Path] = None,
 ) -> Tuple[str, int, int]:
     """Evaluate one SQL file; returns (base_id, suffix, score). Saves CSV as {base_id}_{suffix}.csv."""
@@ -204,10 +203,10 @@ def run_evaluation(args: argparse.Namespace) -> List[Dict[str, Any]]:
     if not eval_path.exists():
         raise FileNotFoundError(f"Eval file not found: {eval_path}")
 
-    gold_ids = list(load_jsonl_to_dict(str(eval_path)).keys())
-    meta_by_id = load_jsonl_to_dict(str(metadata_path))
+    gold_ids = list(load_jsonl_to_dict(eval_path).keys())
+    meta_by_id = load_jsonl_to_dict(metadata_path)
 
-    result_csv_dir = str(Path(pred_sql_dir).parent / "csv")
+    result_csv_dir = pred_sql_dir.parent / "csv"
     Path(result_csv_dir).mkdir(parents=True, exist_ok=True)
 
     all_stems = [f.stem for f in pred_sql_dir.glob("*.sql")]
