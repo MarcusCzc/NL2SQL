@@ -4,7 +4,7 @@ Each adapter provides dataset-specific prompt building and question loading.
 """
 
 from .base import BaseAdapter
-from .ecommerce_bird import EcommerceBirdAdapter
+from .ecommerce_bird_sample200 import EcommerceBirdAdapter
 
 ADAPTERS = {
     "ecommerce_bird_sample200": EcommerceBirdAdapter,
